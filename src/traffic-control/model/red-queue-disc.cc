@@ -109,6 +109,11 @@ TypeId RedQueueDisc::GetTypeId (void)
                    BooleanValue (false),
                    MakeBooleanAccessor (&RedQueueDisc::m_isARED),
                    MakeBooleanChecker ())
+    .AddAttribute ("PDRED",
+                   "True to enable PDRED",
+                   BooleanValue (false),
+                   MakeBooleanAccessor (&RedQueueDisc::m_isPDRED),
+                   MakeBooleanChecker ())
     .AddAttribute ("AdaptMaxP",
                    "True to adapt m_curMaxP",
                    BooleanValue (false),
@@ -134,6 +139,16 @@ TypeId RedQueueDisc::GetTypeId (void)
                    DoubleValue (15),
                    MakeDoubleAccessor (&RedQueueDisc::m_maxTh),
                    MakeDoubleChecker<double> ())
+    .AddAttribute ("MinThPD",
+                   "Minimum average length threshold in packets/bytes for PDRED",
+                   DoubleValue (15),
+                   MakeDoubleAccessor (&RedQueueDisc::m_minThPD),
+                   MakeDoubleChecker<double> ())
+    .AddAttribute ("MaxThPD",
+                   "Maximum average length threshold in packets/bytes for PDRED",
+                   DoubleValue (785),
+                   MakeDoubleAccessor (&RedQueueDisc::m_maxThPD),
+                   MakeDoubleChecker<double> ())
     .AddAttribute ("QueueLimit",
                    "Queue limit in bytes/packets",
                    UintegerValue (25),
@@ -149,10 +164,45 @@ TypeId RedQueueDisc::GetTypeId (void)
                    DoubleValue (50),
                    MakeDoubleAccessor (&RedQueueDisc::m_lInterm),
                    MakeDoubleChecker <double> ())
+    .AddAttribute ("Kp",
+                   "The  proportional gain",
+                   DoubleValue (0.001),
+                   MakeDoubleAccessor (&RedQueueDisc::m_Kp),
+                   MakeDoubleChecker <double> ())
+    .AddAttribute ("Kd",
+                   "The derivative gain",
+                   DoubleValue (0.05),
+                   MakeDoubleAccessor (&RedQueueDisc::m_Kd),
+                   MakeDoubleChecker <double> ())
+    .AddAttribute ("maxProb",
+                   "The maximum probability of dropping a packet",
+                   DoubleValue (0.01),
+                   MakeDoubleAccessor (&RedQueueDisc::m_maxProbPD),
+                   MakeDoubleChecker <double> ())//////////////////////////
+    .AddAttribute ("error_signal_previous",
+                   "The error signal of previous interval ",
+                   DoubleValue (0),
+                   MakeDoubleAccessor (&RedQueueDisc::m_errorSignalPrev),
+                   MakeDoubleChecker <double> ())//////////////////////////////////////////
+    .AddAttribute ("error_signal",
+                   "The error signal ",
+                   DoubleValue (0),
+                   MakeDoubleAccessor (&RedQueueDisc::m_errorSignal),
+                   MakeDoubleChecker <double> ())/////////////////////////////////////////////////////
     .AddAttribute ("TargetDelay",
                    "Target average queuing delay in ARED",
                    TimeValue (Seconds (0.005)),
                    MakeTimeAccessor (&RedQueueDisc::m_targetDelay),
+                   MakeTimeChecker ())
+    .AddAttribute ("TargetDelayPD",
+                   "Target average queuing delay in PFRED",
+                   TimeValue (Seconds (0)),
+                   MakeTimeAccessor (&RedQueueDisc::m_targetDelayPD),
+                   MakeTimeChecker ())////////////////////////////////////////
+    .AddAttribute ("TargetDelayPD",
+                   "Target average queuing delay in PDRED",
+                   TimeValue (Seconds (0)),
+                   MakeTimeAccessor (&RedQueueDisc::m_targetDelayPD),
                    MakeTimeChecker ())
     .AddAttribute ("Interval",
                    "Time interval to update m_curMaxP",
@@ -353,6 +403,8 @@ RedQueueDisc::SetTh (double minTh, double maxTh)
   NS_ASSERT (minTh <= maxTh);
   m_minTh = minTh;
   m_maxTh = maxTh;
+  m_minThPD =minTh;
+  m_maxThPD =maxTh;
 }
 
 int64_t 
@@ -506,6 +558,19 @@ RedQueueDisc::InitializeParams (void)
       // Turn on m_isAdaptMaxP to adapt m_curMaxP
       m_isAdaptMaxP = true;
     }
+    ////////////////////////////////////////////////////////////////////////////////////////
+   if (m_isPDRED)
+    {
+      m_minThPD = 15;
+      m_maxThPD = 785;
+      m_qW = 0.002;
+
+      // Turn on m_isPDMaxP to adapt m_curMaxP
+      m_isPDMaxP = true;
+
+      m_targetDelayPD = (m_minThPD +m_maxThPD )/2;
+    } 
+    /////////////////////////////////////////////////////////////////////////////////////
 
   if (m_isFengAdaptive)
     {
@@ -608,7 +673,8 @@ RedQueueDisc::InitializeParams (void)
                              << "; m_isGentle " << m_isGentle << "; th_diff " << th_diff
                              << "; lInterm " << m_lInterm << "; va " << m_vA <<  "; cur_max_p "
                              << m_curMaxP << "; v_b " << m_vB <<  "; m_vC "
-                             << m_vC << "; m_vD " <<  m_vD);
+                             << m_vC << "; m_vD " <<  m_vD
+                             << "; m_Kp" << m_Kp);
 }
 
 // Updating m_curMaxP, following the pseudocode
@@ -663,6 +729,23 @@ RedQueueDisc::UpdateMaxP (double newAve)
     }
 }
 
+// Update m_curMaxP to keep the average queue length within the target range.
+//////////////////////////////////////////////////
+void
+RedQueueDisc::UpdateMaxPPD (double newAve)
+{
+  NS_LOG_FUNCTION (this << newAve);
+
+  Time now = Simulator::Now ();
+  m_errorSignalPrev =m_errorSignal;
+  m_errorSignal = newAve - m_targetDelayPD;
+
+  m_curMaxP =m_curMaxP + m_Kp*m_errorSignal + m_Kd*(m_errorSignal- m_errorSignalPrev);
+  m_lastSet = now;
+    
+
+}
+/////////////////////////////////////////////////////////////
 // Compute the average queue size
 double
 RedQueueDisc::Estimator (uint32_t nQueued, uint32_t m, double qAvg, double qW)
@@ -676,7 +759,11 @@ RedQueueDisc::Estimator (uint32_t nQueued, uint32_t m, double qAvg, double qW)
   if (m_isAdaptMaxP && now > m_lastSet + m_interval)
     {
       UpdateMaxP (newAve);
-    }
+    }///////////////////////////////////////////////////////////////////////////////////
+  else if (m_isPDMaxP && now > m_lastSet + m_interval)
+    {
+      UpdateMaxPPD (newAve);
+    }///////////////////////////////////////////////////////////////////////////////
   else if (m_isFengAdaptive)
     {
       UpdateMaxPFeng (newAve);  // Update m_curMaxP in MIMD fashion.
