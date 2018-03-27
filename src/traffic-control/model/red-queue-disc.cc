@@ -141,12 +141,12 @@ TypeId RedQueueDisc::GetTypeId (void)
                    MakeDoubleChecker<double> ())
     .AddAttribute ("MinThPD",
                    "Minimum average length threshold in packets/bytes for PDRED",
-                   DoubleValue (15),
+                   DoubleValue (5),
                    MakeDoubleAccessor (&RedQueueDisc::m_minThPD),
                    MakeDoubleChecker<double> ())
     .AddAttribute ("MaxThPD",
                    "Maximum average length threshold in packets/bytes for PDRED",
-                   DoubleValue (785),
+                   DoubleValue (15),
                    MakeDoubleAccessor (&RedQueueDisc::m_maxThPD),
                    MakeDoubleChecker<double> ())
     .AddAttribute ("QueueLimit",
@@ -174,6 +174,11 @@ TypeId RedQueueDisc::GetTypeId (void)
                    DoubleValue (0.05),
                    MakeDoubleAccessor (&RedQueueDisc::m_Kd),
                    MakeDoubleChecker <double> ())
+    .AddAttribute ("TargetQueue",
+                   "The double TargetDelay",
+                   DoubleValue (0),
+                   MakeDoubleAccessor (&RedQueueDisc::m_targetqueue),
+                   MakeDoubleChecker <double> ())//////////////////////////
     .AddAttribute ("maxProb",
                    "The maximum probability of dropping a packet",
                    DoubleValue (0.01),
@@ -195,18 +200,13 @@ TypeId RedQueueDisc::GetTypeId (void)
                    MakeTimeAccessor (&RedQueueDisc::m_targetDelay),
                    MakeTimeChecker ())
     .AddAttribute ("TargetDelayPD",
-                   "Target average queuing delay in PFRED",
-                   TimeValue (Seconds (0)),
-                   MakeTimeAccessor (&RedQueueDisc::m_targetDelayPD),
-                   MakeTimeChecker ())////////////////////////////////////////
-    .AddAttribute ("TargetDelayPD",
                    "Target average queuing delay in PDRED",
                    TimeValue (Seconds (0)),
                    MakeTimeAccessor (&RedQueueDisc::m_targetDelayPD),
-                   MakeTimeChecker ())
+                   MakeTimeChecker ())////////////////////////////////////////
     .AddAttribute ("Interval",
                    "Time interval to update m_curMaxP",
-                   TimeValue (Seconds (0.5)),
+                   TimeValue (Seconds (0.01)),
                    MakeTimeAccessor (&RedQueueDisc::m_interval),
                    MakeTimeChecker ())
     .AddAttribute ("Top",
@@ -557,18 +557,19 @@ RedQueueDisc::InitializeParams (void)
 
       // Turn on m_isAdaptMaxP to adapt m_curMaxP
       m_isAdaptMaxP = true;
+
     }
     ////////////////////////////////////////////////////////////////////////////////////////
    if (m_isPDRED)
     {
-      m_minThPD = 15;
-      m_maxThPD = 785;
+     
       m_qW = 0.002;
 
       // Turn on m_isPDMaxP to adapt m_curMaxP
       m_isPDMaxP = true;
 
-      m_targetDelayPD = (m_minThPD +m_maxThPD )/2;
+      m_targetqueue = m_targetDelayPD.GetSeconds();
+      m_targetqueue = (m_minThPD+m_maxThPD)/2;
     } 
     /////////////////////////////////////////////////////////////////////////////////////
 
@@ -737,13 +738,11 @@ RedQueueDisc::UpdateMaxPPD (double newAve)
   NS_LOG_FUNCTION (this << newAve);
 
   Time now = Simulator::Now ();
-  m_errorSignalPrev =m_errorSignal;
-  m_errorSignal = newAve - m_targetDelayPD;
+  m_errorSignalPrev = m_errorSignal;
+  m_errorSignal = newAve - m_targetqueue;
 
-  m_curMaxP =m_curMaxP + m_Kp*m_errorSignal + m_Kd*(m_errorSignal- m_errorSignalPrev);
+  m_curMaxP = m_curMaxP + (m_Kp*m_errorSignal)/ + m_Kd*(m_errorSignal- m_errorSignalPrev);
   m_lastSet = now;
-    
-
 }
 /////////////////////////////////////////////////////////////
 // Compute the average queue size
@@ -856,6 +855,7 @@ RedQueueDisc::CalculatePNew (void)
        */
       p = 1.0;
     }
+
   else
     {
       /*
@@ -876,6 +876,10 @@ RedQueueDisc::CalculatePNew (void)
     {
       p = 1.0;
     }
+  if (p < 0.0)
+  {
+    p=0.0;
+  }
 
   return p;
 }

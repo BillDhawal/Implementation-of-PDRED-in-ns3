@@ -318,7 +318,8 @@ private:
   double m_maxProbPD;
   double m_errorSignalPrev;
   double m_errorSignal;
-  double m_targetDelayPD; 
+  Time   m_targetDelayPD; 
+  double m_targetqueue;
   uint32_t m_queueLimit;    //!< Queue limit in bytes / packets
   double m_qW;              //!< Queue weight given to cur queue size sample
   double m_lInterm;         //!< The max probability of dropping a packet
